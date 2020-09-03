@@ -639,13 +639,17 @@ unBinary (PG.Binary x) = x
 doesTableExist :: (Text -> IO Statement)
                -> DBName -- ^ table name
                -> IO Bool
-doesTableExist getter (DBName name) = do
+doesTableExist getter (DBName name mschema) = do
     stmt <- getter sql
     with (stmtQuery stmt vals) (\src -> runConduit $ src .| start)
   where
-    sql = "SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE schemaname != 'pg_catalog'"
+    sql = case mschema of
+      Nothing -> "SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE schemaname != 'pg_catalog'"
           <> " AND schemaname != 'information_schema' AND tablename=?"
-    vals = [PersistText name]
+      Just _ -> "SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE schemaname=? AND tablename=?"
+    vals = case mschema of
+      Nothing -> [PersistText name]
+      Just schema -> [PersistText schema, PersistText name]
 
     start = await >>= maybe (error "No results when checking doesTableExist") start'
     start' [PersistInt64 0] = finish False
@@ -841,7 +845,7 @@ getColumns getter def cols = do
             Just o -> error $ "unexpected datatype returned for postgres o="++show o
     helperU = do
         rows <- getAll id
-        return $ map (Right . Right . (DBName . fst . head &&& map (DBName . snd)))
+        return $ map (Right . Right . ((`DBName` Nothing) . fst . head &&& map ((`DBName` Nothing) . snd)))
                $ groupBy ((==) `on` fst) rows
     helper = do
         x <- CL.head
@@ -858,9 +862,9 @@ getColumns getter def cols = do
 -- | Check if a column name is listed as the "safe to remove" in the entity
 -- list.
 safeToRemove :: EntityDef -> DBName -> Bool
-safeToRemove def (DBName colName)
+safeToRemove def (DBName colName ms)
     = any (elem "SafeToRemove" . fieldAttrs)
-    $ filter ((== DBName colName) . fieldDB)
+    $ filter ((== DBName colName ms) . fieldDB)
     $ entityFields def
 
 getAlters :: [EntityDef]
@@ -895,7 +899,7 @@ getAlters defs def (c1, u1) (c2, u2) =
                             : getAltersU news old'
 
     -- Don't drop constraints which were manually added.
-    isManual (DBName x) = "__manual_" `T.isPrefixOf` x
+    isManual (DBName x _) = "__manual_" `T.isPrefixOf` x
 
 getColumn :: (Text -> IO Statement)
           -> DBName -> [PersistValue]
@@ -911,7 +915,7 @@ getColumn getter tableName' [PersistText columnName, PersistText isNullable, Per
              in case getType typeStr of
                   Left s -> return $ Left s
                   Right t -> do
-                      let cname = DBName columnName
+                      let cname = DBName columnName Nothing
                       ref <- getRef cname refName
                       return $ Right Column
                           { cName = cname
@@ -957,7 +961,7 @@ getColumn getter tableName' [PersistText columnName, PersistText isNullable, Per
         case cntrs of
           [] -> return Nothing
           [[PersistText table, PersistText constraint]] ->
-            return $ Just (DBName table, DBName constraint)
+            return $ Just (DBName table Nothing, DBName constraint Nothing)
           xs ->
             error $ mconcat
               [ "Postgresql.getColumn: error fetching constraints. Expected a single result for foreign key query for table: "
@@ -1247,8 +1251,9 @@ fieldName :: (PersistEntity record) => EntityField record typ -> Text
 fieldName = escape . fieldDBName
 
 escape :: DBName -> Text
-escape (DBName s) =
-    T.pack $ '"' : go (T.unpack s) ++ "\""
+escape (DBName s ms) = case ms of
+  Nothing -> T.pack $ '"' : go (T.unpack s) ++ "\""
+  Just sc -> T.pack $ '"' : go (T.unpack sc) ++ ('"' : '.' : '"' : go (T.unpack s) ++ "\"")
   where
     go "" = ""
     go ('"':xs) = "\"\"" ++ go xs
@@ -1318,10 +1323,10 @@ instance PersistConfig PostgresConf where
         addDatabase = maybeAddParam "dbname"   "PGDATABASE"
 
 refName :: DBName -> DBName -> DBName
-refName (DBName table) (DBName column) =
+refName (DBName table ms) (DBName column _) =
     let overhead = T.length $ T.concat ["_", "_fkey"]
         (fromTable, fromColumn) = shortenNames overhead (T.length table, T.length column)
-    in DBName $ T.concat [T.take fromTable table, "_", T.take fromColumn column, "_fkey"]
+    in flip DBName ms $ T.concat [T.take fromTable table, "_", T.take fromColumn column, "_fkey"]
 
     where
 
@@ -1474,4 +1479,3 @@ migrateEnableExtension extName = WriterT $ WriterT $ do
 
 postgresMkColumns :: [EntityDef] -> EntityDef -> ([Column], [UniqueDef], [ForeignDef])
 postgresMkColumns allDefs t = mkColumns allDefs t (emptyBackendSpecificOverrides {backendSpecificForeignKeyName = Just refName})
-

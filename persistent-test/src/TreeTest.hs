@@ -46,7 +46,7 @@ specsWith runDb = describe "tree" $ do
         it "has the right haskell name" $ do
             entityHaskell `shouldBe` HaskellName "Tree"
         it "has the right DB name" $ do
-            entityDB `shouldBe` DBName "trees"
+            entityDB `shouldBe` DBName "trees" Nothing
 
     describe "foreign ref" $ do
         let [ForeignDef{..}] = entityForeigns (entityDef (Proxy :: Proxy Tree))
@@ -55,16 +55,16 @@ specsWith runDb = describe "tree" $ do
                 HaskellName "Tree"
         it "has the right db name" $ do
             foreignRefTableDBName `shouldBe`
-                DBName "trees"
+                DBName "trees" Nothing
         it "has the right constraint name" $ do
             foreignConstraintNameHaskell `shouldBe`
                 HaskellName "fkparent"
         it "has the right DB constraint name" $ do
             foreignConstraintNameDBName `shouldBe`
-                DBName "treesfkparent"
+                DBName "treesfkparent" Nothing
         it "has the right fields" $ do
             foreignFields `shouldBe`
-                [ ( (HaskellName "parent", DBName "parent")
-                  , (HaskellName "name", DBName "name")
+                [ ( (HaskellName "parent", DBName "parent" Nothing)
+                  , (HaskellName "name", DBName "name" Nothing)
                   )
                 ]

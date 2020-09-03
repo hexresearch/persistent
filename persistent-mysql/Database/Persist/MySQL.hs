@@ -544,7 +544,7 @@ getColumns connectInfo getter def cols = do
                 , PersistText clmnName] = return ( cntrName, clmnName )
           check other = fail $ "helperCntrs: unexpected " ++ show other
       rows <- mapM check =<< CL.consume
-      return $ map (Right . Right . (DBName . fst . head &&& map (DBName . snd)))
+      return $ map (Right . Right . ((`DBName` Nothing) . fst . head &&& map ((`DBName` Nothing) . snd)))
              $ groupBy ((==) `on` fst) rows
 
 
@@ -590,7 +590,7 @@ getColumn connectInfo getter tname [ PersistText cname
       (typ, maxLen) <- parseColumnType dataType ci
       -- Okay!
       return Column
-        { cName = DBName $ cname
+        { cName = DBName cname Nothing
         , cNull = null_ == "YES"
         , cSqlType = typ
         , cDefault = default_
@@ -623,7 +623,7 @@ getColumn connectInfo getter tname [ PersistText cname
           case cntrs of
             [] -> return Nothing
             [[PersistText tab, PersistText ref, PersistInt64 pos]] ->
-              return $ if pos == 1 then Just (DBName tab, DBName ref) else Nothing
+              return $ if pos == 1 then Just (DBName tab Nothing, DBName ref Nothing) else Nothing
             xs -> error $ mconcat
               [ "MySQL.getColumn/getRef: error fetching constraints. Expected a single result for foreign key query for table: "
               , T.unpack (unDBName tname)
@@ -910,7 +910,7 @@ escape = T.pack . escapeDBName
 
 -- | Escape a database name to be included on a query.
 escapeDBName :: DBName -> String
-escapeDBName (DBName s) = '`' : go (T.unpack s)
+escapeDBName (DBName s _) = '`' : go (T.unpack s)
     where
       go ('`':xs) = '`' : '`' : go xs
       go ( x :xs) =     x     : go xs

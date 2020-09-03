@@ -325,6 +325,8 @@ parseFieldType t0 =
 
 data PersistSettings = PersistSettings
     { psToDBName :: !(Text -> Text)
+    , psSchemaName :: !(Maybe Text)
+    -- ^ Modification of schema name by default. Default value: @Nothing@.
     , psStrictFields :: !Bool
     -- ^ Whether fields are by default strict. Default value: @True@.
     --
@@ -340,6 +342,7 @@ data PersistSettings = PersistSettings
 defaultPersistSettings, upperCaseSettings, lowerCaseSettings :: PersistSettings
 defaultPersistSettings = PersistSettings
     { psToDBName = id
+    , psSchemaName = Nothing
     , psStrictFields = True
     , psIdName       = "id"
     }
@@ -586,17 +589,19 @@ fixForeignKeysAll unEnts = map fixForeignKeys unEnts
                                     (compositeFields pdef)
                             dbname =
                                 unDBName (entityDB pent)
+                            schname =
+                                dbSchemaName (entityDB pent)
                             oldDbName =
                                 unDBName (foreignRefTableDBName fdef)
                          in fdef
                             { foreignFields = map snd fds_ffs
                             , foreignNullable = setNull $ map fst fds_ffs
                             , foreignRefTableDBName =
-                                DBName dbname
+                                DBName dbname schname
                             , foreignConstraintNameDBName =
                                 DBName
-                                . T.replace oldDbName dbname . unDBName
-                                $ foreignConstraintNameDBName fdef
+                                (T.replace oldDbName dbname . unDBName
+                                $ foreignConstraintNameDBName fdef) schname
                             }
                 Nothing ->
                     error $ "no explicit primary key fdef="++show fdef++ " ent="++show ent
@@ -662,7 +667,7 @@ mkEntityDef ps name entattribs lines =
   UnboundEntityDef foreigns $
     EntityDef
         { entityHaskell = entName
-        , entityDB = DBName $ getDbName ps name' entattribs
+        , entityDB = DBName (getDbName ps name' entattribs) (getSchemaName ps entattribs)
         -- idField is the user-specified Id
         -- otherwise useAutoIdField
         -- but, adjust it if the user specified a Primary
@@ -710,7 +715,7 @@ mkEntityDef ps name entattribs lines =
     setFieldComments xs fld =
         fld { fieldComments = Just (T.unlines xs) }
 
-    autoIdField = mkAutoIdField ps entName (DBName `fmap` idName) idSqlType
+    autoIdField = mkAutoIdField ps entName (flip DBName Nothing `fmap` idName) idSqlType
     idSqlType = maybe SqlInt64 (const $ SqlOther "Primary Key") primaryComposite
 
     setComposite Nothing fd = fd
@@ -729,7 +734,7 @@ mkAutoIdField ps entName idName idSqlType = FieldDef
       -- this should be modeled as a Maybe
       -- but that sucks for non-ID field
       -- TODO: use a sumtype FieldDef | IdFieldDef
-      , fieldDB = fromMaybe (DBName $ psIdName ps) idName
+      , fieldDB = fromMaybe (DBName (psIdName ps) Nothing) idName
       , fieldType = FTTypeCon Nothing $ keyConName $ unHaskellName entName
       , fieldSqlType = idSqlType
       -- the primary field is actually a reference to the entity
@@ -774,7 +779,7 @@ takeCols onErr ps (n':typ:rest)
             Left err -> onErr typ err
             Right ft -> Just FieldDef
                 { fieldHaskell = HaskellName n
-                , fieldDB = DBName $ getDbName ps n rest
+                , fieldDB = DBName (getDbName ps n rest) (getSchemaName ps rest)
                 , fieldType = ft
                 , fieldSqlType = SqlOther $ "SqlType unset for " `mappend` n
                 , fieldAttrs = rest
@@ -792,6 +797,10 @@ takeCols _ _ _ = Nothing
 getDbName :: PersistSettings -> Text -> [Text] -> Text
 getDbName ps n [] = psToDBName ps n
 getDbName ps n (a:as) = fromMaybe (getDbName ps n as) $ T.stripPrefix "sql=" a
+
+getSchemaName :: PersistSettings -> [Text] -> Maybe Text
+getSchemaName ps [] = psSchemaName ps
+getSchemaName ps (a:ax) = maybe (getSchemaName ps ax) Just $ T.stripPrefix "schema=" a
 
 takeConstraint :: PersistSettings
           -> Text
@@ -869,23 +878,27 @@ takeUniq ps tableName defs (n:rest)
       "!" `T.isPrefixOf` a
     isSqlName a =
       "sql=" `T.isPrefixOf` a
+    isSchemaName a =
+      "schema=" `T.isPrefixOf` a
     isNonField a =
        isAttr a
       || isSqlName a
+      || isSchemaName a
     (fields, nonFields) =
       break isNonField rest
     attrs = filter isAttr nonFields
     usualDbName =
-      DBName $ psToDBName ps (tableName `T.append` n)
+      DBName (psToDBName ps (tableName `T.append` n)) (psSchemaName ps)
     sqlName :: Maybe DBName
-    sqlName =
-      case find isSqlName nonFields of
-        Nothing ->
-          Nothing
-        (Just t) ->
-          case drop 1 $ T.splitOn "=" t of
-            (x : _) -> Just (DBName x)
-            _ -> Nothing
+    sqlName = let
+      findField f = case find f nonFields of
+        Nothing -> Nothing
+        (Just t) -> case drop 1 $ T.splitOn "=" t of
+          (x : _) -> Just x
+          _ -> Nothing
+      in case findField isSqlName of
+        Nothing -> Nothing
+        Just sname -> Just $ DBName sname (findField isSchemaName)
     dbName = fromMaybe usualDbName sqlName
     getDBName [] t =
       error $ "Unknown column in unique constraint: " ++ show t
@@ -924,11 +937,11 @@ takeForeign ps tableName _defs = takeRefTable
                 { foreignRefTableHaskell =
                     HaskellName refTableName
                 , foreignRefTableDBName =
-                    DBName $ psToDBName ps refTableName
+                    DBName (psToDBName ps refTableName) (psSchemaName ps)
                 , foreignConstraintNameHaskell =
                     HaskellName n
                 , foreignConstraintNameDBName =
-                    DBName $ psToDBName ps (tableName `T.append` n)
+                    DBName (psToDBName ps (tableName `T.append` n)) (psSchemaName ps)
                 , foreignFieldCascade = FieldCascade
                     { fcOnDelete = onDelete
                     , fcOnUpdate = onUpdate

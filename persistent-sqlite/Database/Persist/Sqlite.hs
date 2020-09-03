@@ -467,9 +467,9 @@ mockMigration mig = do
 -- | Check if a column name is listed as the "safe to remove" in the entity
 -- list.
 safeToRemove :: EntityDef -> DBName -> Bool
-safeToRemove def (DBName colName)
+safeToRemove def (DBName colName ms)
     = any (elem "SafeToRemove" . fieldAttrs)
-    $ filter ((== DBName colName) . fieldDB)
+    $ filter ((== DBName colName ms) . fieldDB)
     $ entityFields def
 
 getCopyTable :: [EntityDef]
@@ -479,7 +479,7 @@ getCopyTable :: [EntityDef]
 getCopyTable allDefs getter def = do
     stmt <- getter $ T.concat [ "PRAGMA table_info(", escape table, ")" ]
     oldCols' <- with (stmtQuery stmt []) (\src -> runConduit $ src .| getCols)
-    let oldCols = map DBName $ filter (/= "id") oldCols' -- need to update for table id attribute ?
+    let oldCols = map (`DBName` Nothing) $ filter (/= "id") oldCols' -- need to update for table id attribute ?
     let newCols = filter (not . safeToRemove def) $ map cName cols
     let common = filter (`elem` oldCols) newCols
     return [ (False, tmpSql)
@@ -503,7 +503,7 @@ getCopyTable allDefs getter def = do
                 return $ name : names
             Just y -> error $ "Invalid result from PRAGMA table_info: " ++ show y
     table = entityDB def
-    tableTmp = DBName $ unDBName table <> "_backup"
+    tableTmp = DBName (unDBName table <> "_backup") Nothing
     (cols, uniqs, fdef) = sqliteMkColumns allDefs def
     cols' = filter (not . safeToRemove def . cName) cols
     newSql = mkCreateTable False def (cols', uniqs, fdef)
@@ -619,10 +619,12 @@ sqlUnique (UniqueDef _ cname cols _) = T.concat
     ]
 
 escape :: DBName -> Text
-escape (DBName s) =
-    T.concat [q, T.concatMap go s, q]
+escape (DBName s ms) = case ms of
+  Nothing -> T.concat [q, T.concatMap go s, q]
+  Just ts -> T.concat [q, T.concatMap go s, q, d, q, T.concatMap go s, q]
   where
     q = T.singleton '"'
+    d = T.singleton 'c'
     go '"' = "\"\""
     go c = T.singleton c
 

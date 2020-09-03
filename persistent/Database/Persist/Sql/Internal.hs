@@ -86,15 +86,15 @@ mkColumns allDefs t overrides =
     ref c fe (a:as)
         | Just x <- T.stripPrefix "reference=" a = do
             constraintName <- snd <$> (ref c fe as)
-            pure (DBName x, constraintName)
+            pure (DBName x Nothing, constraintName)
         | Just x <- T.stripPrefix "constraint=" a = do
             tableName <- fst <$> (ref c fe as)
-            pure (tableName, DBName x)
+            pure (tableName, DBName x Nothing)
     ref c x (_:as) = ref c x as
 
 refName :: DBName -> DBName -> DBName
-refName (DBName table) (DBName column) =
-    DBName $ Data.Monoid.mconcat [table, "_", column, "_fkey"]
+refName (DBName table ms1) (DBName column _) =
+    DBName (Data.Monoid.mconcat [table, "_", column, "_fkey"]) ms1
 
 resolveTableName :: [EntityDef] -> HaskellName -> DBName
 resolveTableName [] (HaskellName hn) = error $ "Table not found: " `Data.Monoid.mappend` T.unpack hn

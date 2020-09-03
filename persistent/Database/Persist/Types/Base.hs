@@ -160,7 +160,7 @@ type ExtraLine = [Text]
 
 newtype HaskellName = HaskellName { unHaskellName :: Text }
     deriving (Show, Eq, Read, Ord)
-newtype DBName = DBName { unDBName :: Text }
+data DBName = DBName { unDBName :: !Text, dbSchemaName :: !(Maybe Text) }
     deriving (Show, Eq, Read, Ord)
 
 type Attr = Text

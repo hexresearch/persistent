@@ -642,7 +642,7 @@ id_ = "_id"
 keyToMongoDoc :: (PersistEntity record, PersistEntityBackend record ~ DB.MongoContext)
                   => Key record -> DB.Document
 keyToMongoDoc k = case entityPrimary $ entityDefFromKey k of
-    Nothing   -> zipToDoc [DBName id_] values
+    Nothing   -> zipToDoc [DBName id_ Nothing] values
     Just pdef -> [id_ DB.=: zipToDoc (primaryNames pdef)  values]
   where
     primaryNames = map fieldDB . compositeFields
